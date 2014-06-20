@@ -1,0 +1,112 @@
+// TASK DEFINITIONS
+
+// gunzip
+deftask gunzip( out( File ) : gz( File ) )in bash *{
+    gzip -d -c -S .tar.gz $gz > $out
+}*
+
+//deftask createIndex( : reference( File ) ) in bash *{
+//    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
+//}*
+
+deftask map( sai( File ) : reference( File ) read( File ) ) in bash *{
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa aln $reference $read > $sai
+}*
+
+deftask align( sam( File) : reference( File ) fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File ) ) in bash *{
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa sampe $reference $fwdsai $revsai $fwdfq $revfq > $sam
+}*
+
+//SortOrder: Sort order of output file( Required ). Possible values: {unsorted, queryname, coordinate} 
+deftask sort( bam( File ) : inputsam( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/SortSam.jar \
+        I=$inputsam O=$bam SORT_ORDER=coordinate
+}*
+
+//The metrics file is required and contains the duplication metrics
+deftask dedup( bam( File ) : inputbam( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/MarkDuplicates.jar \
+        I=$inputbam O=$bam METRICS_FILE=dup_metrics.txt
+}*
+
+// Replaces all read groups in the INPUT file with a new read group and assigns all reads to this read group in the OUTPUT BAM
+deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/AddOrReplaceReadGroups.jar \
+        I=$inputbam O=$bam \
+        RGLB=$library RGPL=$platform RGPU=$platformunit RGSM=$samplename
+}*
+
+deftask realignerTargetCreator( outputintervals( File ) : reference( File ) inputbam( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \ 
+    -T RealignerTargetCreator -R $reference -I $inputbam -o $outputintervals
+}*
+
+//Must  use  same  input  file(s)  used  in RealignerTargetCreator step
+deftask realign( outputbam( File ) :  reference( File ) inputbam( File ) targetintervals( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    -T IndelRealigner -R $reference -I $inputbam -targetIntervals $targetintervals -o $outputbam
+}*
+
+// http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
+// knownsites is optional and will not be used by us at the moment
+deftask baseRecalibration( outputgroup( File ) : reference( File ) inputbam( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    -T BaseRecalibrator -I $inputbam -R $reference -o $outputgroup
+}*
+
+deftask printReads( outputbam( File ) : reference( File ) inputbam( File ) recalgroup( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    -T PrintReads -R $reference -I $inputbam -BQSR $recalgroup -o $outputbam
+}*
+
+deftask reduceReads( reducedbam( File ) : reference( File ) inputbam( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    -T ReduceReads -R $reference -I $inputbam -o $reducedbam
+}*
+
+deftask unifyGenotyper( outputvcf( File ) : reference( File ) inputbam( File ) ) in bash *{
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    -T UnifiedGenotyper -R $reference -I $inputbam -o $outputvcf
+}*
+
+// WORKFLOW INPUT FILES
+
+fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000000' ;//'/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000001';
+fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000000' ;//'/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000001';
+ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22.fa.gz'; //referenzgenom
+
+// Vars
+lib = '2845856850';
+platf = 'illumina';
+platfu = 'AXL2342';
+samna = 'HG00096';
+
+
+// WORKFLOW DEFINITION
+
+ref = gunzip( gz: ref-gz );
+
+//Align seperately
+sai1 = map( reference:ref read:fastq1 );
+sai2 = map( reference:ref read:fastq2 );
+//Combine all
+sam = align( reference:ref fwdsai:sai1 revsai:sai2 fwdfq:fastq1 revfq:fastq2 );
+
+bam = sort( inputsam:sam );
+bam1 = dedup( inputbam:bam );
+bam2 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platformunit:platfu samplename:samna );
+
+intervals = realignerTargetCreator( reference:ref inputbam:bam2 );
+bam3 = realign( reference:ref inputbam:bam2 targetintervals:intervals );
+
+recal = baseRecalibration( reference:ref inputbam:bam3 );
+bam4 = printReads( reference:ref inputbam:bam3 recalgroup:recal );
+
+bam5 = reduceReads( reference:ref inputbam:bam4 );
+
+vcf1 = unifyGenotyper( reference:ref inputbam:bam5 );
+
+//Start the workflow
+bam2;
