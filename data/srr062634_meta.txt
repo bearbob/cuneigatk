@@ -1,0 +1,35 @@
+FASTQ_FILE				data/HG00096/sequence_read/SRR062634.filt.fastq.gz
+MD5						32d1df183c3f26ce8a2c51176013eef5
+RUN_ID					SRR062634
+STUDY_ID				SRP001294
+STUDY_NAME				1000 Genomes GBR population sequencing
+CENTER_NAME				WUGSC
+__________________________________________________________________________________
+SUBMISSION_ID			SRA022820
+SUBMISSION_DATE			2010-07-28 00:00:00
+SAMPLE_ID				SRS006837
+SAMPLE_NAME				HG00096
+POPULATION				GBR
+EXPERIMENT_ID			SRX025016
+__________________________________________________________________________________
+INSTRUMENT_PLATFORM		ILLUMINA
+INSTRUMENT_MODEL		Illumina Genome Analyzer II
+LIBRARY_NAME			2845856850
+RUN_NAME				64100
+RUN_BLOCK_NAME			206
+INSERT_SIZE				PAIRED
+__________________________________________________________________________________
+LIBRARY_LAYOUT			
+PAIRED_FASTQ			PAIRED
+WITHDRAWN			
+WITHDRAWN_DATE	
+COMMENT	
+READ_COUNT	
+BASE_COUNT	
+ANALYSIS_GROUP			low coverage
+
+//don't know what this is
+308846	30884600	
+
+ORIGINAL: 
+data/HG00127/sequence_read/SRR062637_1.filt.fastq.gz	3e6e067efb3cae6f33bc33c47c3b4e07	SRR062637	SRP001294	1000 Genomes GBR population sequencing	WUGSC	SRA022824	2010-07-28 00:00:00	SRS006860	HG00127	GBR	SRX025017	ILLUMINA	Illumina Genome Analyzer II	2845924593	64104		206	PAIRED	data/HG00127/sequence_read/SRR062637_2.filt.fastq.gz	0			25958445	2595844500	low coverage
