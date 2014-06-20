@@ -1,0 +1,78 @@
+// TASK DEFINITIONS
+
+// gunzip
+deftask gunzip( out( File ) : gz( File ) )in bash *{
+    gzip -d -c -S .tar.gz $gz > $out
+}*
+
+// Bowtie v2.2.2
+deftask bowtie2-idx( idx( File ) : fa( File ) )in bash *{
+    bowtie2-build $fa bowtie2-index
+    tar cf $idx --remove-files bowtie2-index.*
+}*
+
+deftask bowtie2-align( sam( File ) : [task idx( File )] [fastq1( File ) fastq2( File )] )in bash *{
+    tar xf $idx
+    bowtie2 -x bowtie2-index -1 $fastq1 -2 $fastq2 -S $sam
+}*
+
+// Samtools v0.1.19
+deftask samtools-view( bam( File ) : sam( File ) )in bash *{
+    samtools view -bS $sam > $bam
+}*
+
+deftask samtools-sort( sortedbam( File ) : bam( File ) )in bash *{
+    sortedbam=alignment-sorted.bam
+    samtools sort -m 1G $bam alignment-sorted
+}*
+
+deftask samtools-merge( mergedbam( File ) : <bam( File )> )in bash *{
+    samtools merge -f $mergedbam ${bam[@]}
+}*
+
+deftask samtools-mpileup( mpileup( File ) : bam( File ) fa( File ) )in bash *{
+    samtools mpileup -f $fa $bam > $mpileup
+}*
+
+// Varscan 2.3.6
+deftask varscan( vcf( File ) : mpileup( File ) )in bash *{
+    java net.sf.varscan.VarScan mpileup2snp $mpileup --output-vcf --p-value 99e-02 > $vcf
+}*
+
+
+// WORKFLOW INPUT FILES
+
+fastq1 = '/home/jorgen/SRR062634_1.filt.fastq000000' '/home/jorgen/SRR062634_1.filt.fastq000001';
+fastq2 = '/home/jorgen/SRR062634_2.filt.fastq000000' '/home/jorgen/SRR062634_2.filt.fastq000001';
+fa-gz  = '/home/jorgen/chr22.fa.gz';
+
+
+// WORKFLOW DEFINITION
+
+fa = gunzip( gz: fa-gz );
+
+idx = bowtie2-idx( fa: fa );
+
+sam = bowtie2-align(
+    fastq1: fastq1
+    fastq2: fastq2
+    idx   : idx
+);
+
+bam = samtools-view( sam: sam );
+
+sorted-bam = samtools-sort( bam: bam );
+
+merged-bam = samtools-merge( bam: sorted-bam );
+
+mpileup = samtools-mpileup(
+    bam: merged-bam
+    fa : fa
+);
+
+vcf = varscan( mpileup: mpileup );
+
+
+// TARGET
+
+vcf;
