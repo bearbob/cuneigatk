@@ -1,30 +1,52 @@
+/* GATK Workflow in Cuneiform
+ * Best Practices for Variant Calling with the GATK
+ * Version: 2014-06-25
+ * By Jörgen Brandt, Björn Groß
+ **************************************
+ * To use this workflow, replace the paths with your paths to the files and programs
+ */
+
 // TASK DEFINITIONS
 
 // gunzip
 deftask gunzip( out( File ) : gz( File ) )in bash *{
+    out=reference.fasta
     gzip -d -c -S .tar.gz $gz > $out
 }*
 
-//deftask createIndex( : reference( File ) ) in bash *{
-//    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
-//}*
+//Creating the fasta sequence dictionary file
+//http://gatkforums.broadinstitute.org/discussion/1601/how-can-i-prepare-a-fasta-file-to-use-as-reference
+deftask createIndex( dict( File ) : reference( File ) dictref( File ) ) in bash *{
+    dict=$dictref.dict
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
+    R=$reference O=$dict
+    /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx $reference
+}*
 
+// align files seperately
+// the reference genom has to be index first
 deftask map( sai( File ) : reference( File ) read( File ) ) in bash *{
     /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
     /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa aln $reference $read > $sai
 }*
 
-deftask align( sam( File) : reference( File ) fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File ) ) in bash *{
+// combine the previously aligned files
+// again, the reference genom has to be index first
+
+//eckige klammern - kein kreuzprodukt
+deftask align( sam( File) : reference( File ) [fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File )] ) in bash *{
     /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
     /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa sampe $reference $fwdsai $revsai $fwdfq $revfq > $sam
 }*
 
+// Marking duplicates, first step: sort the input
 //SortOrder: Sort order of output file( Required ). Possible values: {unsorted, queryname, coordinate} 
 deftask sort( bam( File ) : inputsam( File ) ) in bash *{
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/SortSam.jar \
         I=$inputsam O=$bam SORT_ORDER=coordinate
 }*
 
+// Mark duplicates
 //The metrics file is required and contains the duplication metrics
 deftask dedup( bam( File ) : inputbam( File ) ) in bash *{
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/MarkDuplicates.jar \
@@ -33,49 +55,64 @@ deftask dedup( bam( File ) : inputbam( File ) ) in bash *{
 
 // Replaces all read groups in the INPUT file with a new read group and assigns all reads to this read group in the OUTPUT BAM
 deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename) in bash *{
+    bam=output.bam
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/AddOrReplaceReadGroups.jar \
         I=$inputbam O=$bam \
         RGLB=$library RGPL=$platform RGPU=$platformunit RGSM=$samplename
 }*
 
+/*
+ * Note: The GATK doesn't work with Java Version 1.8 (which i use) at the moment. If you don't have 1.7 running, 
+ * you might have to give the full path to a JRE as well.
+ */
+
 deftask realignerTargetCreator( outputintervals( File ) : reference( File ) inputbam( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \ 
-    -T RealignerTargetCreator -R $reference -I $inputbam -o $outputintervals
+    ln -s $ref reference.fasta
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
+    REFERENCE=reference.fasta OUTPUT=reference.dict
+    /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx reference.fasta
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    -T RealignerTargetCreator -R reference.fasta -I $inputbam -o $outputintervals
 }*
 
-//Must  use  same  input  file(s)  used  in RealignerTargetCreator step
+//Must use same input file(s) used in RealignerTargetCreator step
 deftask realign( outputbam( File ) :  reference( File ) inputbam( File ) targetintervals( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
     -T IndelRealigner -R $reference -I $inputbam -targetIntervals $targetintervals -o $outputbam
 }*
 
 // http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
 // knownsites is optional and will not be used by us at the moment
 deftask baseRecalibration( outputgroup( File ) : reference( File ) inputbam( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
     -T BaseRecalibrator -I $inputbam -R $reference -o $outputgroup
 }*
 
 deftask printReads( outputbam( File ) : reference( File ) inputbam( File ) recalgroup( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
     -T PrintReads -R $reference -I $inputbam -BQSR $recalgroup -o $outputbam
 }*
 
 deftask reduceReads( reducedbam( File ) : reference( File ) inputbam( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
     -T ReduceReads -R $reference -I $inputbam -o $reducedbam
 }*
 
 deftask unifyGenotyper( outputvcf( File ) : reference( File ) inputbam( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
     -T UnifiedGenotyper -R $reference -I $inputbam -o $outputvcf
 }*
 
 // WORKFLOW INPUT FILES
-
-fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000000' ;//'/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000001';
-fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000000' ;//'/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000001';
-ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22.fa.gz'; //referenzgenom
+fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000001';
+fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000001';
+ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22.fa.gz'; //reference genom
 
 // Vars
 lib = '2845856850';
@@ -109,4 +146,4 @@ bam5 = reduceReads( reference:ref inputbam:bam4 );
 vcf1 = unifyGenotyper( reference:ref inputbam:bam5 );
 
 //Start the workflow
-bam2;
+bam3;
