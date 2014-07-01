@@ -11,7 +11,7 @@
 
 // gunzip
 deftask gunzip( out( File ) : gz( File ) )in bash *{
-    out=reference.fasta
+    out=reference
     gzip -d -c -S .tar.gz $gz > $out
 }*
 
@@ -58,20 +58,23 @@ deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform 
  * you might have to give the full path to a JRE as well.
  */
 
-deftask realignerTargetCreator( outputintervals( File ) bami( File ) : reference( File ) inputbam( File ) ) in bash *{
-    #create link to reference file
-    ln -s $reference ref.fasta
+deftask realignerTargetCreator( outputintervals( File ) newref( File ) newdict( File ) newfai( File ) bami( File ) : reference( File ) inputbam( File ) ) in bash *{
+    #create reference link
+    newref=$reference.fasta
+    ln -s $reference $newref
     # create reference dictionary and fastaindex
+    newdict=$reference.dict
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
-    REFERENCE=ref.fasta OUTPUT=ref.dict
-    /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx ref.fasta > ref.fasta.fai
+    REFERENCE=$newref OUTPUT=$newdict
+    newfai=$newref.fai
+    /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx $newref > $newfai
     #create bam index file
     bami=$inputbam.bai
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/BuildBamIndex.jar \
     INPUT=$inputbam OUTPUT=$bami
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T RealignerTargetCreator -R ref.fasta -I $inputbam -o $outputintervals
+    -T RealignerTargetCreator -R $newref -I $inputbam -o $outputintervals
 }*
 
 //Must use same input file(s) used in RealignerTargetCreator step
@@ -137,7 +140,7 @@ bam2 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platfor
 // wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
 // bami = [2]taskname
 // Memo: 1-Indeziert
-intervals bami = realignerTargetCreator( reference:ref inputbam:bam2 );
+intervals newref dict fai bami = realignerTargetCreator( reference:ref inputbam:bam2 );
 bam3 = realign( reference:ref inputbam:bam2 targetintervals:intervals );
 
 recal = baseRecalibration( reference:ref inputbam:bam3 );
