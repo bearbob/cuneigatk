@@ -15,6 +15,26 @@ deftask gunzip( out( File ) : gz( File ) )in bash *{
     gzip -d -c -S .tar.gz $gz > $out
 }*
 
+//create index for the reference and a reference dictionary
+deftask indexReference( newref( File ) refdict( File ) reffai( File ) : reference( File ) ) in bash *{
+    #create reference link
+    newref=$reference.fasta
+    ln -s $reference $newref
+    # create reference dictionary and fastaindex
+    refdict=$reference.dict
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
+    REFERENCE=$newref OUTPUT=$refdict
+    reffai=$newref.fai
+    /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx $newref > $reffai
+}*
+
+//create an index file for the bam
+deftask indexBam( bamindex( File ) : inputbam( File ) ) in bash *{
+    bamindex=$inputbam.bai
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/BuildBamIndex.jar \
+    INPUT=$inputbam OUTPUT=$bamindex
+}*
+
 // align files seperately
 // the reference genom has to be index first
 deftask map( sai( File ) : reference( File ) read( File ) ) in bash *{
@@ -58,30 +78,31 @@ deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform 
  * you might have to give the full path to a JRE as well.
  */
 
-deftask realignerTargetCreator( outputintervals( File ) newref( File ) newdict( File ) newfai( File ) bami( File ) : reference( File ) inputbam( File ) ) in bash *{
-    #create reference link
-    newref=$reference.fasta
-    ln -s $reference $newref
-    # create reference dictionary and fastaindex
-    newdict=$reference.dict
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
-    REFERENCE=$newref OUTPUT=$newdict
-    newfai=$newref.fai
-    /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx $newref > $newfai
-    #create bam index file
-    bami=$inputbam.bai
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/BuildBamIndex.jar \
-    INPUT=$inputbam OUTPUT=$bami
+deftask realignerTargetCreator( outputintervals( File ) : reference( File ) inputbam( File ) dict( File ) fai( File ) bami( File ) ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputbam input.bam
+    ln -s $bami input.bam.bai
+    #create interval
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T RealignerTargetCreator -R $newref -I $inputbam -o $outputintervals
+    -T RealignerTargetCreator -R reference.fasta -I input.bam -o $outputintervals
 }*
 
-//Must use same input file(s) used in RealignerTargetCreator step
-deftask realign( outputbam( File ) :  reference( File ) inputbam( File ) targetintervals( File ) ) in bash *{
+//Must use same inputbam file used in RealignerTargetCreator step
+deftask realign( outputbam( File ) :  reference( File ) inputbam( File ) targetintervals( File ) dict( File ) fai( File ) bami( File ) ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputbam input.bam
+    ln -s $bami input.bam.bai
+    ####
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T IndelRealigner -R $reference -I $inputbam -targetIntervals $targetintervals -o $outputbam
+    -T IndelRealigner -R reference.fasta -I input.bam -targetIntervals $targetintervals -o $outputbam
 }*
 
 // http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
@@ -140,15 +161,19 @@ bam2 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platfor
 // wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
 // bami = [2]taskname
 // Memo: 1-Indeziert
-intervals newref dict fai bami = realignerTargetCreator( reference:ref inputbam:bam2 );
-bam3 = realign( reference:ref inputbam:bam2 targetintervals:intervals );
+newref refdict reffai = indexReference( reference: ref );
+bami = indexBam( inputbam : bam2 );
+intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
+bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
 
-recal = baseRecalibration( reference:ref inputbam:bam3 );
-bam4 = printReads( reference:ref inputbam:bam3 recalgroup:recal );
+recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami);
+bam4 = printReads( reference:newref inputbam:bam3 recalgroup:recal );
 
-bam5 = reduceReads( reference:ref inputbam:bam4 );
+bam5 = reduceReads( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami);
 
-vcf1 = unifyGenotyper( reference:ref inputbam:bam5 );
+vcf1 = unifyGenotyper( reference:newref inputbam:bam5 dict:refdict fai:reffai bami:bami);
 
 //Start the workflow
-bam4;
+vcf1;
+
+//TODO: IndelRealigner bearbeiten, realignerTargetCreator scheint durchzulaufen, übergib .fai, etc auch weiter
