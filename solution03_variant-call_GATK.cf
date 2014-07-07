@@ -73,12 +73,20 @@ deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform 
         RGLB=$library RGPL=$platform RGPU=$platformunit RGSM=$samplename
 }*
 
+deftask validateBam( output( File ) : inputbam( File ) ) in bash *{
+    #The output file contains the status report on the input file
+    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/ValidateSamFile.jar \
+        INPUT=$inputbam OUTPUT=bamValidation_report.txt
+    #use the inputfile as outputfile
+    ln -s $inputbam $output
+}*
+
 /*
  * Note: The GATK doesn't work with Java Version 1.8 (which i use) at the moment. If you don't have 1.7 running, 
  * you might have to give the full path to a JRE as well.
  */
 
-deftask realignerTargetCreator( outputintervals( File ) : reference( File ) inputbam( File ) dict( File ) fai( File ) bami( File ) ) in bash *{
+deftask realignerTargetCreator( outputintervals( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -92,7 +100,24 @@ deftask realignerTargetCreator( outputintervals( File ) : reference( File ) inpu
 }*
 
 //Must use same inputbam file used in RealignerTargetCreator step
-deftask realign( outputbam( File ) :  reference( File ) inputbam( File ) targetintervals( File ) dict( File ) fai( File ) bami( File ) ) in bash *{
+deftask realign( outputbam( File ) :  [reference( File ) dict( File ) fai( File )] [targetintervals( File ) inputbam( File ) bami( File )] ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputbam input.bam
+    ln -s $bami input.bam.bai
+    ln -s $targetintervals .intervals
+    ####
+    targetintervals=$target.intervals
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    -T IndelRealigner -R reference.fasta -I input.bam -targetIntervals $targetintervals -o $outputbam
+}*
+
+// http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
+// knownsites is optional and will not be used by us at the moment
+deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -102,34 +127,28 @@ deftask realign( outputbam( File ) :  reference( File ) inputbam( File ) targeti
     ####
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T IndelRealigner -R reference.fasta -I input.bam -targetIntervals $targetintervals -o $outputbam
+    -T BaseRecalibrator -I input.bam -R reference.fasta -o $outputgroup
 }*
 
-// http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
-// knownsites is optional and will not be used by us at the moment
-deftask baseRecalibration( outputgroup( File ) : reference( File ) inputbam( File ) ) in bash *{
+deftask printReads( output( File ) : reference( File ) inputbam( File ) recalgroup( File ) ) in bash *{
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
-    -T BaseRecalibrator -I $inputbam -R $reference -o $outputgroup
-}*
-
-deftask printReads( outputbam( File ) : reference( File ) inputbam( File ) recalgroup( File ) ) in bash *{
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
-    -T PrintReads -R $reference -I $inputbam -BQSR $recalgroup -o $outputbam
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    -T PrintReads -R $reference -I $inputbam -BQSR $recalgroup -o $output
 }*
 
 deftask reduceReads( reducedbam( File ) : reference( File ) inputbam( File ) ) in bash *{
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
     -T ReduceReads -R $reference -I $inputbam -o $reducedbam
 }*
 
 deftask unifyGenotyper( outputvcf( File ) : reference( File ) inputbam( File ) ) in bash *{
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \  
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
     -T UnifiedGenotyper -R $reference -I $inputbam -o $outputvcf
 }*
+
+//MEMO: Currently not working for fastq1-lists
 
 // WORKFLOW INPUT FILES
 fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000001';
@@ -155,7 +174,9 @@ sam = align( reference:ref fwdsai:sai1 revsai:sai2 fwdfq:fastq1 revfq:fastq2 );
 
 bam = sort( inputsam:sam );
 bam1 = dedup( inputbam:bam );
-bam2 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platformunit:platfu samplename:samna );
+bam1-1 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platformunit:platfu samplename:samna );
+
+bam2 = validateBam( inputbam:bam1-1 );
 
 // Bindet beide Outputs, erst Kanal 1 (intervals), dann Kanal 2 (bami)
 // wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
@@ -163,6 +184,7 @@ bam2 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platfor
 // Memo: 1-Indeziert
 newref refdict reffai = indexReference( reference: ref );
 bami = indexBam( inputbam : bam2 );
+
 intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
 bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
 
@@ -175,5 +197,3 @@ vcf1 = unifyGenotyper( reference:newref inputbam:bam5 dict:refdict fai:reffai ba
 
 //Start the workflow
 vcf1;
-
-//TODO: IndelRealigner bearbeiten, realignerTargetCreator scheint durchzulaufen, übergib .fai, etc auch weiter
