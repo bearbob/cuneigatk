@@ -117,7 +117,7 @@ deftask realign( outputbam( File ) :  [reference( File ) dict( File ) fai( File 
 
 // http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
 // knownsites is optional and will not be used by us at the moment
-deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) in bash *{
+deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] known( File ) ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -127,19 +127,21 @@ deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File )
     ####
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T BaseRecalibrator -I input.bam -R reference.fasta -o $outputgroup
+    -T BaseRecalibrator -I input.bam -R reference.fasta -o $outputgroup \
+    -knownSites $known
 }*
 
-deftask printReads( output( File ) : reference( File ) inputbam( File ) recalgroup( File ) ) in bash *{
+deftask printReads( output( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File ) recalgroup( File )] ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputbam input.bam
+    ln -s $bami input.bam.bai
+    ####
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T PrintReads -R $reference -I $inputbam -BQSR $recalgroup -o $output
-}*
-
-deftask reduceReads( reducedbam( File ) : reference( File ) inputbam( File ) ) in bash *{
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T ReduceReads -R $reference -I $inputbam -o $reducedbam
+    -T PrintReads -R reference.fasta -I input.bam -BQSR $recalgroup -o $output
 }*
 
 deftask unifyGenotyper( outputvcf( File ) : reference( File ) inputbam( File ) ) in bash *{
@@ -153,7 +155,14 @@ deftask unifyGenotyper( outputvcf( File ) : reference( File ) inputbam( File ) )
 // WORKFLOW INPUT FILES
 fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000001';
 fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000001';
-ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22.fa.gz'; //reference genom
+/* the chr22 file needed to be changed to match the known variants. the first line 
+ * >chr22 was replaced with >22
+ */
+ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22_2.fa.gz';
+//get the known variants here:
+// ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
+//     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
+known-variants = '/Users/vadril/Documents/Uni/Work/GATK/data/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
 
 // Vars
 lib = '2845856850';
@@ -188,12 +197,10 @@ bami = indexBam( inputbam : bam2 );
 intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
 bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
 
-recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami);
-bam4 = printReads( reference:newref inputbam:bam3 recalgroup:recal );
+recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami known:known-variants);
+bam4 = printReads( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami recalgroup:recal );
 
-bam5 = reduceReads( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami);
-
-vcf1 = unifyGenotyper( reference:newref inputbam:bam5 dict:refdict fai:reffai bami:bami);
+vcf1 = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami);
 
 //Start the workflow
 vcf1;
