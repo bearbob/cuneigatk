@@ -144,10 +144,17 @@ deftask printReads( output( File ) : [reference( File ) dict( File ) fai( File )
     -T PrintReads -R reference.fasta -I input.bam -BQSR $recalgroup -o $output
 }*
 
-deftask unifyGenotyper( outputvcf( File ) : reference( File ) inputbam( File ) ) in bash *{
+deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputbam input.bam
+    ln -s $bami input.bam.bai
+    ####
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T UnifiedGenotyper -R $reference -I $inputbam -o $outputvcf
+    -T UnifiedGenotyper -R reference.fasta -I input.bam -o $outputvcf
 }*
 
 //MEMO: Currently not working for fastq1-lists
@@ -200,7 +207,9 @@ bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:re
 recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami known:known-variants);
 bam4 = printReads( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami recalgroup:recal );
 
-vcf1 = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami);
+bami2 = indexBam( inputbam: bam4 );
+
+vcf1 = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami2 );
 
 //Start the workflow
 vcf1;
