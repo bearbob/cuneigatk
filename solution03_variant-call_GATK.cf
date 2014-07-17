@@ -157,19 +157,25 @@ deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai(
     -T UnifiedGenotyper -R reference.fasta -I input.bam -o $outputvcf
 }*
 
-//MEMO: Currently not working for fastq1-lists
+/* Pseudo task, used to match the input files as planned when using lists of files
+ * e.g. the reference chromosom must always be matched by its own known variants file
+ */
+deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File ) knownVariants( File ) ] library platform platformunit samplename ) {
+    //put workflow here inside the pseudo function
+    
+}
 
 // WORKFLOW INPUT FILES
-fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq000001';
-fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000000' '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq000001';
+fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq';
+fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq';
 /* the chr22 file needed to be changed to match the known variants. the first line 
  * >chr22 was replaced with >22
  */
-ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22_2.fa.gz';
+ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22_2.fa.gz' '/Users/vadril/Documents/Uni/Work/GATK/data/chr21_2.fa.gz';
 //get the known variants here:
 // ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
 //     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
-known-variants = '/Users/vadril/Documents/Uni/Work/GATK/data/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
+known-variants = '/Users/vadril/Documents/Uni/Work/GATK/data/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf' '/Users/vadril/Documents/Uni/Work/GATK/data/ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf';
 
 // Vars
 lib = '2845856850';
