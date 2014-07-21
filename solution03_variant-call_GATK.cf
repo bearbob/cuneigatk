@@ -1,7 +1,7 @@
 /* GATK Workflow in Cuneiform
  * Best Practices for Variant Calling with the GATK
  * Version: 0.81
- * Date: 2014-07-30
+ * Date: 2014-07-21
  * By Björn Groß, Jörgen Brandt
  **************************************
  * To use this workflow, replace the paths with your paths to the files and programs
@@ -13,6 +13,13 @@
 deftask gunzip( out( File ) : gz( File ) )in bash *{
     out=reference
     gzip -d -c -S .tar.gz $gz > $out
+}*
+
+deftask bwa-idx( idx( File ) : reference( File ) )in bash *{
+    idx=bwa-index.tar
+    ln -s $reference reference.fasta
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index reference.fasta
+    tar cf $idx reference.fasta.*
 }*
 
 //create index for the reference and a reference dictionary
@@ -37,18 +44,20 @@ deftask indexBam( bamindex( File ) : inputbam( File ) ) in bash *{
 
 // align files seperately
 // the reference genom has to be index first
-deftask map( sai( File ) : reference( File ) read( File ) ) in bash *{
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa aln $reference $read > $sai
+deftask map( sai( File ) : [reference( File ) indextar( File )] read( File ) ) in bash *{
+    tar xf $indextar
+    ln -s $reference reference.fasta
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa aln reference.fasta $read > $sai
 }*
 
 // combine the previously aligned files
 // again, the reference genom has to be index first
 
 //eckige klammern - kein kreuzprodukt
-deftask align( sam( File) : reference( File ) [fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File )] ) in bash *{
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index $reference
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa sampe $reference $fwdsai $revsai $fwdfq $revfq > $sam
+deftask align( sam( File) : [reference( File ) indextar( File )] [fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File )] ) in bash *{
+    tar xf $indextar
+    ln -s $reference reference.fasta
+    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa sampe reference.fasta $fwdsai $revsai $fwdfq $revfq > $sam
 }*
 
 // Marking duplicates, first step: sort the input
@@ -172,20 +181,15 @@ deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf(
     -recalFile $recalFile -tranchesFile $tranchesFile
 }*
 
-
 /* Pseudo task, used to match the input files as planned when using lists of files
  * e.g. the reference chromosom must always be matched by its own known variants file
  */
-deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File ) knownVariants( File ) ] library platform platformunit samplename ) {
-    //put workflow here inside the pseudo function
-    // WORKFLOW DEFINITION
-    ref = gunzip( gz: ref-gz );
-
+deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref( File ) refdict( File ) reffai( File ) knownVariants( File )  refindextar( File ) ] library platform platformunit samplename ) {
     //Align seperately
-    sai1 = map( reference:ref read:fastq1 );
-    sai2 = map( reference:ref read:fastq2 );
+    sai1 = map( reference:ref indextar:refindextar read:fastq1 );
+    sai2 = map( reference:ref indextar:refindextar read:fastq2 );
     //Combine all
-    sam = align( reference:ref fwdsai:sai1 revsai:sai2 fwdfq:fastq1 revfq:fastq2 );
+    sam = align( reference:ref indextar:refindextar fwdsai:sai1 revsai:sai2 fwdfq:fastq1 revfq:fastq2 );
 
     bam = sort( inputsam:sam );
     bam1 = dedup( inputbam:bam );
@@ -197,7 +201,6 @@ deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File
     // wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
     // bami = [2]taskname
     // Memo: 1-Indeziert
-    newref refdict reffai = indexReference( reference: ref );
     bami = indexBam( inputbam : bam2 );
 
     intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
@@ -211,17 +214,28 @@ deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File
     vcf = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami2 );
 }
 
+deftask analyseReference( newref( File ) refdict( File ) reffai( File ) indextar( File ) : reference( File ) ) {
+    ref = gunzip( gz: ref-gz );
+    indextar = bwa-idx( reference: ref );
+    newref refdict reffai = indexReference( reference: ref );
+}
+
+deftask startWorkflow( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File ) knownVariants( File ) ] library platform platformunit samplename ) {
+    ref refdict reffai indextar = analyseReference( reference: ref-gz );
+    vcf = analysis( fastq1:fastq1 fastq2:fastq2 ref:ref refdict:refdict reffai:reffai knownVariants:known-variants refindextar:indextar library:lib platform:platf platformunit:platfu samplename:samna );
+}
+
 // WORKFLOW INPUT FILES
 fastq1 = 'SRR062634_1.filt.fastq000000' 'SRR062634_1.filt.fastq000001';
 fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
 /* the chr22 file needed to be changed to match the known variants. the first line 
  * >chr22 was replaced with >22
  */
-ref-gz  = 'chr22_2.fa.gz' 'chr21_2.fa.gz';
+ref-gz  = 'chr21_2.fa.gz' 'chr22_2.fa.gz';
 //get the known variants here:
 // ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
 //     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
-known-variants = 'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf' 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf';
+known-variants = 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf' 'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
 
 // Vars
 lib = '2845856850';
@@ -230,5 +244,5 @@ platfu = 'AXL2342';
 samna = 'HG00096';
 
 //Start the workflow
-vcf = analysis( fastq1:fastq1 fastq2:fastq2 ref-gz:ref-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna );
+vcf = startWorkflow( fastq1:fastq1 fastq2:fastq2 ref-gz:ref-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna );
 vcf;
