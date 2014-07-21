@@ -66,7 +66,7 @@ deftask dedup( bam( File ) : inputbam( File ) ) in bash *{
 }*
 
 // Replaces all read groups in the INPUT file with a new read group and assigns all reads to this read group in the OUTPUT BAM
-deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename) in bash *{
+deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename ) in bash *{
     bam=output.bam
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/AddOrReplaceReadGroups.jar \
         I=$inputbam O=$bam \
@@ -157,25 +157,71 @@ deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai(
     -T UnifiedGenotyper -R reference.fasta -I input.bam -o $outputvcf
 }*
 
+deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf( File ) [reference( File ) dict( File ) fai( File )] ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputVcf input.vcf
+    ####
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    -T VariantRecalibrator -R reference.fasta -input input.vcf  \
+    -resource:hapmap,known=false,training=true,truth=true,prior=15.0 hapmap_3.3.b37.sites.vcf \
+    -an QD -an ReadPosRankSum -mode SNP \
+    -recalFile $recalFile -tranchesFile $tranchesFile
+}*
+
+
 /* Pseudo task, used to match the input files as planned when using lists of files
  * e.g. the reference chromosom must always be matched by its own known variants file
  */
 deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File ) knownVariants( File ) ] library platform platformunit samplename ) {
     //put workflow here inside the pseudo function
-    
+    // WORKFLOW DEFINITION
+    ref = gunzip( gz: ref-gz );
+
+    //Align seperately
+    sai1 = map( reference:ref read:fastq1 );
+    sai2 = map( reference:ref read:fastq2 );
+    //Combine all
+    sam = align( reference:ref fwdsai:sai1 revsai:sai2 fwdfq:fastq1 revfq:fastq2 );
+
+    bam = sort( inputsam:sam );
+    bam1 = dedup( inputbam:bam );
+    bam1-1 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platformunit:platfu samplename:samna );
+
+    bam2 = validateBam( inputbam:bam1-1 );
+
+    // Bindet beide Outputs, erst Kanal 1 (intervals), dann Kanal 2 (bami)
+    // wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
+    // bami = [2]taskname
+    // Memo: 1-Indeziert
+    newref refdict reffai = indexReference( reference: ref );
+    bami = indexBam( inputbam : bam2 );
+
+    intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
+    bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
+
+    recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami known:known-variants);
+    bam4 = printReads( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami recalgroup:recal );
+
+    bami2 = indexBam( inputbam: bam4 );
+
+    vcf = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami2 );
 }
 
 // WORKFLOW INPUT FILES
-fastq1 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_1.filt.fastq';
-fastq2 = '/Users/vadril/Documents/Uni/Work/GATK/data/SRR062634_2.filt.fastq';
+fastq1 = 'SRR062634_1.filt.fastq000000' 'SRR062634_1.filt.fastq000001';
+fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
 /* the chr22 file needed to be changed to match the known variants. the first line 
  * >chr22 was replaced with >22
  */
-ref-gz  = '/Users/vadril/Documents/Uni/Work/GATK/data/chr22_2.fa.gz' '/Users/vadril/Documents/Uni/Work/GATK/data/chr21_2.fa.gz';
+ref-gz  = 'chr22_2.fa.gz' 'chr21_2.fa.gz';
 //get the known variants here:
 // ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
 //     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
-known-variants = '/Users/vadril/Documents/Uni/Work/GATK/data/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf' '/Users/vadril/Documents/Uni/Work/GATK/data/ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf';
+known-variants = 'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf' 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf';
 
 // Vars
 lib = '2845856850';
@@ -183,39 +229,6 @@ platf = 'illumina';
 platfu = 'AXL2342';
 samna = 'HG00096';
 
-
-// WORKFLOW DEFINITION
-
-ref = gunzip( gz: ref-gz );
-
-//Align seperately
-sai1 = map( reference:ref read:fastq1 );
-sai2 = map( reference:ref read:fastq2 );
-//Combine all
-sam = align( reference:ref fwdsai:sai1 revsai:sai2 fwdfq:fastq1 revfq:fastq2 );
-
-bam = sort( inputsam:sam );
-bam1 = dedup( inputbam:bam );
-bam1-1 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platformunit:platfu samplename:samna );
-
-bam2 = validateBam( inputbam:bam1-1 );
-
-// Bindet beide Outputs, erst Kanal 1 (intervals), dann Kanal 2 (bami)
-// wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
-// bami = [2]taskname
-// Memo: 1-Indeziert
-newref refdict reffai = indexReference( reference: ref );
-bami = indexBam( inputbam : bam2 );
-
-intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
-bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
-
-recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami known:known-variants);
-bam4 = printReads( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami recalgroup:recal );
-
-bami2 = indexBam( inputbam: bam4 );
-
-vcf1 = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami2 );
-
 //Start the workflow
-vcf1;
+vcf = analysis( fastq1:fastq1 fastq2:fastq2 ref-gz:ref-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna );
+vcf;
