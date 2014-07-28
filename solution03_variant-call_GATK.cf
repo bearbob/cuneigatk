@@ -1,7 +1,10 @@
-/* GATK Workflow in Cuneiform
+/**************************************
+ * GATK Workflow in Cuneiform
+ **************************************
  * Best Practices for Variant Calling with the GATK
+ **************************************
  * Version: 0.81
- * Date: 2014-07-21
+ * Date: 2014-07-24
  * By Björn Groß, Jörgen Brandt
  **************************************
  * To use this workflow, replace the paths with your paths to the files and programs
@@ -25,13 +28,13 @@ deftask bwa-idx( idx( File ) : reference( File ) )in bash *{
 //create index for the reference and a reference dictionary
 deftask indexReference( newref( File ) refdict( File ) reffai( File ) : reference( File ) ) in bash *{
     #create reference link
-    newref=$reference.fasta
+    newref=reference.fasta
     ln -s $reference $newref
     # create reference dictionary and fastaindex
-    refdict=$reference.dict
+    refdict=reference.dict
     java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
     REFERENCE=$newref OUTPUT=$refdict
-    reffai=$newref.fai
+    reffai=reference.fasta.fai
     /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx $newref > $reffai
 }*
 
@@ -125,8 +128,7 @@ deftask realign( outputbam( File ) :  [reference( File ) dict( File ) fai( File 
 }*
 
 // http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
-// knownsites is optional and will not be used by us at the moment
-deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] known( File ) ) in bash *{
+deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File ) known( File )] [inputbam( File ) bami( File )] ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -153,7 +155,7 @@ deftask printReads( output( File ) : [reference( File ) dict( File ) fai( File )
     -T PrintReads -R reference.fasta -I input.bam -BQSR $recalgroup -o $output
 }*
 
-deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) in bash *{
+deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] dbsnp( File ) ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -163,28 +165,52 @@ deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai(
     ####
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
-    -T UnifiedGenotyper -R reference.fasta -I input.bam -o $outputvcf
+    -T UnifiedGenotyper -R reference.fasta -I input.bam -o $outputvcf \
+    --dbsnp $dbsnp
 }*
 
-deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf( File ) [reference( File ) dict( File ) fai( File )] ) in bash *{
+
+deftask variantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File) ] [reference( File ) dict( File ) fai( File )] dbsnp( File ) ) in bash *{
+    #need to create symbolic links to achieve same filenames
+    ln -s $reference reference.fasta
+    ln -s $dict reference.dict
+    ln -s $fai reference.fasta.fai
+    ln -s $inputVcf input.vcf
+    ln -s $bam input.bam
+    ln -s $bami input.bam.bai
+    ####
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    -Xmx2g -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+   -T VariantAnnotator \
+   -R reference.fasta -o $vcf \
+   -A QualByDepth -A MQRankSum\
+   --variant input.vcf -I input.bam\
+   -L input.vcf \
+   --dbsnp $dbsnp
+}*
+
+deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf( File ) [reference( File ) dict( File ) fai( File )] hapmap( File ) omni( File ) dbsnp( File ) ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
     ln -s $fai reference.fasta.fai
     ln -s $inputVcf input.vcf
     ####
+    #-an QD -an HaplotypeScore -an MQRankSum -an ReadPosRankSum -an FS -an MQ -an InbreedingCoeff \
     /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
     -T VariantRecalibrator -R reference.fasta -input input.vcf  \
-    -resource:hapmap,known=false,training=true,truth=true,prior=15.0 hapmap_3.3.b37.sites.vcf \
-    -an QD -an ReadPosRankSum -mode SNP \
+    -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $hapmap \
+    -resource:omni,known=false,training=true,truth=false,prior=12.0 $omni \
+    -resource:dbsnp,known=true,training=false,truth=false,prior=6.0 $dbsnp \
+    -mode SNP -an MQRankSum \
     -recalFile $recalFile -tranchesFile $tranchesFile
 }*
 
 /* Pseudo task, used to match the input files as planned when using lists of files
  * e.g. the reference chromosom must always be matched by its own known variants file
  */
-deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref( File ) refdict( File ) reffai( File ) knownVariants( File )  refindextar( File ) ] library platform platformunit samplename ) {
+deftask analysis( target( File ) : [ fastq1( File ) fastq2( File ) ] [ ref( File ) refdict( File ) reffai( File ) knownVariants( File )  refindextar( File ) ] library platform platformunit samplename hapmap( File ) omni( File ) dbsnp( File ) ) {
     //Align seperately
     sai1 = map( reference:ref indextar:refindextar read:fastq1 );
     sai2 = map( reference:ref indextar:refindextar read:fastq2 );
@@ -194,24 +220,23 @@ deftask analysis( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref( File ) 
     bam = sort( inputsam:sam );
     bam1 = dedup( inputbam:bam );
     bam1-1 = addOrReplaceReadGroups( inputbam:bam1 library:lib  platform:platf platformunit:platfu samplename:samna );
-
     bam2 = validateBam( inputbam:bam1-1 );
-
-    // Bindet beide Outputs, erst Kanal 1 (intervals), dann Kanal 2 (bami)
-    // wenn z.B. nur bami gebunden werden sollte, kann der 2.Kanal auch direkt angesprochen werden mit
-    // bami = [2]taskname
-    // Memo: 1-Indeziert
+    
     bami = indexBam( inputbam : bam2 );
+    intervals = realignerTargetCreator( reference:ref inputbam:bam2 dict:refdict fai:reffai bami:bami );
+    bam3 = realign( reference:ref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
 
-    intervals = realignerTargetCreator( reference:newref inputbam:bam2 dict:refdict fai:reffai bami:bami );
-    bam3 = realign( reference:newref inputbam:bam2 targetintervals:intervals dict:refdict fai:reffai bami:bami);
-
-    recal = baseRecalibration( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami known:known-variants);
-    bam4 = printReads( reference:newref inputbam:bam3 dict:refdict fai:reffai bami:bami recalgroup:recal );
+    recal = baseRecalibration( reference:ref inputbam:bam3 dict:refdict fai:reffai bami:bami known:knownVariants);
+    bam4 = printReads( reference:ref inputbam:bam3 dict:refdict fai:reffai bami:bami recalgroup:recal );
 
     bami2 = indexBam( inputbam: bam4 );
 
-    vcf = unifyGenotyper( reference:newref inputbam:bam4 dict:refdict fai:reffai bami:bami2 );
+    vcf1 = unifyGenotyper( reference:ref inputbam:bam4 dict:refdict fai:reffai bami:bami2 dbsnp:dbsnp);
+    vcf2 = variantAnnotator( inputVcf:vcf1 bam:bam4 bami:bami2 reference:ref dict:refdict fai:reffai dbsnp:dbsnp );
+    recal2 tranches = variantRecalibrator( inputVcf:vcf2 reference:ref dict:refdict fai:reffai hapmap:hapmap omni:omni dbsnp:dbsnp);
+    
+    
+    target = recal2;
 }
 
 deftask analyseReference( newref( File ) refdict( File ) reffai( File ) indextar( File ) : reference( File ) ) {
@@ -220,9 +245,9 @@ deftask analyseReference( newref( File ) refdict( File ) reffai( File ) indextar
     newref refdict reffai = indexReference( reference: ref );
 }
 
-deftask startWorkflow( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File ) knownVariants( File ) ] library platform platformunit samplename ) {
+deftask startWorkflow( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz( File ) knownVariants( File ) ] library platform platformunit samplename hapmap( File ) omni( File ) dbsnp( File ) ) {
     ref refdict reffai indextar = analyseReference( reference: ref-gz );
-    vcf = analysis( fastq1:fastq1 fastq2:fastq2 ref:ref refdict:refdict reffai:reffai knownVariants:known-variants refindextar:indextar library:lib platform:platf platformunit:platfu samplename:samna );
+    vcf = analysis( fastq1:fastq1 fastq2:fastq2 ref:ref refdict:refdict reffai:reffai knownVariants:knownVariants refindextar:indextar library:lib platform:platf platformunit:platfu samplename:samna hapmap:hapmap omni:omni dbsnp:dbsnp );
 }
 
 // WORKFLOW INPUT FILES
@@ -231,11 +256,14 @@ fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
 /* the chr22 file needed to be changed to match the known variants. the first line 
  * >chr22 was replaced with >22
  */
-ref-gz  = 'chr21_2.fa.gz' 'chr22_2.fa.gz';
+ref-gz  = 'chr21_2.fa.gz';// 'chr22_2.fa.gz';
 //get the known variants here:
 // ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
 //     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
-known-variants = 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf' 'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
+known-variants = 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf'; //'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
+hapmap = 'hapmap_3.3.b36.vcf';
+omni= '1000G_omni2.5.b36.vcf';
+dbsnp= 'dbsnp_138.b36.vcf';
 
 // Vars
 lib = '2845856850';
@@ -244,5 +272,5 @@ platfu = 'AXL2342';
 samna = 'HG00096';
 
 //Start the workflow
-vcf = startWorkflow( fastq1:fastq1 fastq2:fastq2 ref-gz:ref-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna );
+vcf = startWorkflow( fastq1:fastq1 fastq2:fastq2 ref-gz:ref-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna hapmap:hapmap omni:omni dbsnp:dbsnp);
 vcf;
