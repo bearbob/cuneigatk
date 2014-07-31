@@ -136,7 +136,7 @@ deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File )
     ln -s $inputbam input.bam
     ln -s $bami input.bam.bai
     ####
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
+    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java -Xmx8g\
     -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
     -T BaseRecalibrator -I input.bam -R reference.fasta -o $outputgroup \
     -knownSites $known
@@ -183,7 +183,7 @@ deftask variantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File
     -Xmx2g -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
    -T VariantAnnotator \
    -R reference.fasta -o $vcf \
-   -A QualByDepth -A MQRankSum\
+   -A QualByDepth\
    --variant input.vcf -I input.bam\
    -L input.vcf \
    --dbsnp $dbsnp
@@ -203,7 +203,7 @@ deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf(
     -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $hapmap \
     -resource:omni,known=false,training=true,truth=false,prior=12.0 $omni \
     -resource:dbsnp,known=true,training=false,truth=false,prior=6.0 $dbsnp \
-    -mode SNP -an MQRankSum \
+    -mode SNP -an QD \
     -recalFile $recalFile -tranchesFile $tranchesFile
 }*
 
@@ -251,8 +251,10 @@ deftask startWorkflow( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz(
 }
 
 // WORKFLOW INPUT FILES
-fastq1 = 'SRR062634_1.filt.fastq000000' 'SRR062634_1.filt.fastq000001';
-fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
+//fastq1 = 'SRR062634_1.filt.fastq000000' 'SRR062634_1.filt.fastq000001';
+//fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
+fastq1 = 'SRR062634_1.filt.fastq';
+fastq2 = 'SRR062634_2.filt.fastq';
 /* the chr22 file needed to be changed to match the known variants. the first line 
  * >chr22 was replaced with >22
  */
