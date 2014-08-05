@@ -203,7 +203,7 @@ deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf(
     -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $hapmap \
     -resource:omni,known=false,training=true,truth=false,prior=12.0 $omni \
     -resource:dbsnp,known=true,training=false,truth=false,prior=6.0 $dbsnp \
-    -mode SNP -an QD \
+    -mode SNP -an QD -an MQ -an DP \
     -recalFile $recalFile -tranchesFile $tranchesFile
 }*
 
@@ -240,7 +240,7 @@ deftask analysis( target( File ) : [ fastq1( File ) fastq2( File ) ] [ ref( File
 }
 
 deftask analyseReference( newref( File ) refdict( File ) reffai( File ) indextar( File ) : reference( File ) ) {
-    ref = gunzip( gz: ref-gz );
+    ref = gunzip( gz: reference );
     indextar = bwa-idx( reference: ref );
     newref refdict reffai = indexReference( reference: ref );
 }
@@ -255,17 +255,15 @@ deftask startWorkflow( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz(
 //fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
 fastq1 = 'SRR062634_1.filt.fastq';
 fastq2 = 'SRR062634_2.filt.fastq';
-/* the chr22 file needed to be changed to match the known variants. the first line 
- * >chr22 was replaced with >22
- */
-ref-gz  = 'chr21_2.fa.gz';// 'chr22_2.fa.gz';
+
+ref1-gz  = 'chr21.fa.gz' 'chr22.fa.gz';
 //get the known variants here:
 // ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
 //     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
-known-variants = 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf'; //'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
-hapmap = 'hapmap_3.3.b36.vcf';
-omni= '1000G_omni2.5.b36.vcf';
-dbsnp= 'dbsnp_138.b36.vcf';
+known-variants = 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf' 'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
+hapmap = 'hapmap_3.3.hg19.vcf';
+omni= '1000G_omni2.5.hg19.vcf';
+dbsnp= 'dbsnp_138.hg19.vcf';
 
 // Vars
 lib = '2845856850';
@@ -274,5 +272,5 @@ platfu = 'AXL2342';
 samna = 'HG00096';
 
 //Start the workflow
-vcf = startWorkflow( fastq1:fastq1 fastq2:fastq2 ref-gz:ref-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna hapmap:hapmap omni:omni dbsnp:dbsnp);
+vcf = startWorkflow( fastq1:fastq1 fastq2:fastq2 ref-gz:ref1-gz knownVariants:known-variants library:lib platform:platf platformunit:platfu samplename:samna hapmap:hapmap omni:omni dbsnp:dbsnp);
 vcf;
