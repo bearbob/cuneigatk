@@ -10,6 +10,16 @@
  * To use this workflow, replace the paths with your paths to the files and programs
  */
 
+
+// SETUP, global vars 
+bwa = 'however/you/call/bwa/from/terminal';
+picard = 'however/you/call/picard/from/terminal';
+gatk = 'however/you/call/GATK/from/terminal
+//path to java needed if default version is 1.8 or higher, GATK is only supported for 1.7 (as of 14.8.2014)
+//if 1.7 is your default, this is simply 'java'
+java = '/Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java';
+
+
 // TASK DEFINITIONS
 
 // gunzip
@@ -18,87 +28,107 @@ deftask gunzip( out( File ) : gz( File ) )in bash *{
     gzip -d -c -S .tar.gz $gz > $out
 }*
 
-deftask bwa-idx( idx( File ) : reference( File ) )in bash *{
+deftask createIdx( idx( File ) : reference( File ) bwa )in bash *{
     idx=bwa-index.tar
     ln -s $reference reference.fasta
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa index reference.fasta
+    $bwa index reference.fasta
     tar cf $idx reference.fasta.*
 }*
 
+deftask bwa-idx( idx( File ) : reference( File) ) {
+    idx = createIdx( reference:reference bwa:bwa );
+}
+
 //create index for the reference and a reference dictionary
-deftask indexReference( newref( File ) refdict( File ) reffai( File ) : reference( File ) ) in bash *{
+deftask createIndexReference( newref( File ) refdict( File ) reffai( File ) : reference( File ) picard ) in bash *{
     #create reference link
     newref=reference.fasta
     ln -s $reference $newref
     # create reference dictionary and fastaindex
     refdict=reference.dict
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/CreateSequenceDictionary.jar \
+    java -jar $picard/CreateSequenceDictionary.jar \
     REFERENCE=$newref OUTPUT=$refdict
     reffai=reference.fasta.fai
     /Users/vadril/Documents/Uni/Work/GATK/samtools-0.1.19/samtools faidx $newref > $reffai
 }*
 
-//create an index file for the bam
-deftask indexBam( bamindex( File ) : inputbam( File ) ) in bash *{
+deftask indexReference( newref( File ) refdict( File ) reffai( File ) : reference( File ) ) {
+    newref refdict reffai = createIndexReference( reference:reference picard:picard );
+}
+
+deftask createIndexBam( bamindex( File ) : inputbam( File ) picard ) in bash *{
     bamindex=$inputbam.bai
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/BuildBamIndex.jar \
+    java -jar $picard/BuildBamIndex.jar \
     INPUT=$inputbam OUTPUT=$bamindex
 }*
 
-// align files seperately
-// the reference genom has to be index first
-deftask map( sai( File ) : [reference( File ) indextar( File )] read( File ) ) in bash *{
+deftask indexBam( bamindex( File ) : inputbam( File ) ) in bash *{
+    bamindex= createIndexBam( inputbam:inputbam picard:picard );
+}*
+
+deftask createMap( sai( File ) : [reference( File ) indextar( File )] read( File ) bwa ) in bash *{
     tar xf $indextar
     ln -s $reference reference.fasta
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa aln reference.fasta $read > $sai
+    $bwa aln reference.fasta $read > $sai
 }*
+
+deftask map( sai( File ) : [reference( File ) indextar( File )] read( File ) ) {
+    sai = createMap( reference:reference indextar:indextar read:read bwa:bwa );
+}
 
 // combine the previously aligned files
 // again, the reference genom has to be index first
-
-//eckige klammern - kein kreuzprodukt
-deftask align( sam( File) : [reference( File ) indextar( File )] [fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File )] ) in bash *{
+deftask doAlign( sam( File) : [reference( File ) indextar( File )] [fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File )] bwa ) in bash *{
     tar xf $indextar
     ln -s $reference reference.fasta
-    /Users/vadril/Documents/Uni/Work/GATK/bwa-0.7.9a/bwa sampe reference.fasta $fwdsai $revsai $fwdfq $revfq > $sam
+    $bwa sampe reference.fasta $fwdsai $revsai $fwdfq $revfq > $sam
 }*
+
+deftask align( sam( File) : [reference( File ) indextar( File )] [fwdsai( File ) revsai( File ) fwdfq( File ) revfq( File )] ) {
+    sam = doAlign( reference:reference indextar:indextar fwdsai:fwdsai revsai:revsai fwdfq:fwdfq revfq:revfq bwa:bwa );
+}
 
 // Marking duplicates, first step: sort the input
 //SortOrder: Sort order of output file( Required ). Possible values: {unsorted, queryname, coordinate} 
-deftask sort( bam( File ) : inputsam( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/SortSam.jar \
-        I=$inputsam O=$bam SORT_ORDER=coordinate
+deftask doSort( bam( File ) : inputsam( File ) picard ) in bash *{
+    java -jar $picard/SortSam.jar I=$inputsam O=$bam SORT_ORDER=coordinate
 }*
+
+deftask sort( bam( File ) : inputsam( File ) ) {
+    bam = doSort( inputsam:inputsam picard:picard );
+}
 
 // Mark duplicates
 //The metrics file is required and contains the duplication metrics
-deftask dedup( bam( File ) : inputbam( File ) ) in bash *{
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/MarkDuplicates.jar \
-        I=$inputbam O=$bam METRICS_FILE=dup_metrics.txt
+deftask doDedup( bam( File ) : inputbam( File ) ) in bash *{
+    java -jar $picard/MarkDuplicates.jar I=$inputbam O=$bam METRICS_FILE=dup_metrics.txt
 }*
+
+deftask dedup( bam( File ) : inputbam( File ) ) {
+    bam = doDedup( inputbam:inputbam picard:picard );
+}
 
 // Replaces all read groups in the INPUT file with a new read group and assigns all reads to this read group in the OUTPUT BAM
-deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename ) in bash *{
+deftask doAddOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename picard ) in bash *{
     bam=output.bam
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/AddOrReplaceReadGroups.jar \
-        I=$inputbam O=$bam \
+    java -jar $picard/AddOrReplaceReadGroups.jar I=$inputbam O=$bam \
         RGLB=$library RGPL=$platform RGPU=$platformunit RGSM=$samplename
 }*
+deftask addOrReplaceReadGroups( bam( File ) : inputbam( File ) library platform platformunit samplename ) {
+    bam=doAddOrReplaceReadGroups( inputbam:inputbam library:library platform:platform platformunit:platformunit samplename:samplename picard:picard );
+}
 
-deftask validateBam( output( File ) : inputbam( File ) ) in bash *{
+deftask doValidateBam( output( File ) : inputbam( File ) picard ) in bash *{
     #The output file contains the status report on the input file
-    java -jar /Users/vadril/Documents/Uni/Work/GATK/picard-tools-1.114/picard-tools-1.114/ValidateSamFile.jar \
-        INPUT=$inputbam OUTPUT=bamValidation_report.txt
+    java -jar $picard/ValidateSamFile.jar INPUT=$inputbam OUTPUT=bamValidation_report.txt
     #use the inputfile as outputfile
     ln -s $inputbam $output
 }*
+deftask validateBam( output( File ) : inputbam( File ) ) {
+    output = doValidateBam( inputbam:inputbam picard:picard );
+}
 
-/*
- * Note: The GATK doesn't work with Java Version 1.8 (which i use) at the moment. If you don't have 1.7 running, 
- * you might have to give the full path to a JRE as well.
- */
-
-deftask realignerTargetCreator( outputintervals( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) in bash *{
+deftask doRealignerTargetCreator( outputintervals( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] gatk java) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -106,13 +136,16 @@ deftask realignerTargetCreator( outputintervals( File ) : [reference( File ) dic
     ln -s $inputbam input.bam
     ln -s $bami input.bam.bai
     #create interval
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -Xmx8g -jar $gatk/GenomeAnalysisTK.jar \
     -T RealignerTargetCreator -R reference.fasta -I input.bam -o $outputintervals
 }*
+deftask realignerTargetCreator( outputintervals( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] ) {
+    outputintervals = doRealignerTargetCreator( reference:reference dict:dict fai:fai inputbam:inputbam bami:bami gatk:gatk );
+}
+
 
 //Must use same inputbam file used in RealignerTargetCreator step
-deftask realign( outputbam( File ) :  [reference( File ) dict( File ) fai( File )] [targetintervals( File ) inputbam( File ) bami( File )] ) in bash *{
+deftask doRealign( outputbam( File ) :  [reference( File ) dict( File ) fai( File )] [targetintervals( File ) inputbam( File ) bami( File )] gatk java ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -122,13 +155,15 @@ deftask realign( outputbam( File ) :  [reference( File ) dict( File ) fai( File 
     ln -s $targetintervals .intervals
     ####
     targetintervals=$target.intervals
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -Xmx8g -jar $gatk/GenomeAnalysisTK.jar \
     -T IndelRealigner -R reference.fasta -I input.bam -targetIntervals $targetintervals -o $outputbam
 }*
+deftask realign( outputbam( File ) :  [reference( File ) dict( File ) fai( File )] [targetintervals( File ) inputbam( File ) bami( File )] ) {
+    outputbam = doRealign( reference:reference dict:dict fai:fai targetintervals:targetintervals inputbam:inputbam bami:bami java:java gatk:gatk );
+}
 
 // http://www.broadinstitute.org/gatk//events/2038/GATKw1212-BP-3-Base_recalibration.pdf
-deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File ) known( File )] [inputbam( File ) bami( File )] ) in bash *{
+deftask doBaseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File ) known( File )] [inputbam( File ) bami( File )] java gatk ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -136,13 +171,15 @@ deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File )
     ln -s $inputbam input.bam
     ln -s $bami input.bam.bai
     ####
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java -Xmx8g\
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -Xmx16g -jar $gatk/GenomeAnalysisTK.jar \
     -T BaseRecalibrator -I input.bam -R reference.fasta -o $outputgroup \
     -knownSites $known
 }*
+deftask baseRecalibration( outputgroup( File ) : [reference( File ) dict( File ) fai( File ) known( File )] [inputbam( File ) bami( File )] ) {
+    outputgroup = doBaseRecalibration( reference:reference dict:dict fai:fai known:known inputbam:inputbam bami:bami java:java gatk:gatk );
+}
 
-deftask printReads( output( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File ) recalgroup( File )] ) in bash *{
+deftask doPrintReads( output( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File ) recalgroup( File )] java gatk ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -150,12 +187,14 @@ deftask printReads( output( File ) : [reference( File ) dict( File ) fai( File )
     ln -s $inputbam input.bam
     ln -s $bami input.bam.bai
     ####
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -Xmx8g -jar $gatk/GenomeAnalysisTK.jar \
     -T PrintReads -R reference.fasta -I input.bam -BQSR $recalgroup -o $output
 }*
+deftask printReads( output( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File ) recalgroup( File )] ) {
+    output = doPrintReads( reference:reference dict:dict fai:fai inputbam:inputbam bami:bami recalgroup:recalgroup java:java gatk:gatk );
+}
 
-deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] dbsnp( File ) ) in bash *{
+deftask doUnifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] dbsnp( File ) java gatk ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -163,14 +202,16 @@ deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai(
     ln -s $inputbam input.bam
     ln -s $bami input.bam.bai
     ####
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -jar $gatk/GenomeAnalysisTK.jar \
     -T UnifiedGenotyper -R reference.fasta -I input.bam -o $outputvcf \
     --dbsnp $dbsnp
 }*
+deftask unifyGenotyper( outputvcf( File ) : [reference( File ) dict( File ) fai( File )] [inputbam( File ) bami( File )] dbsnp( File ) ) {
+    outputvcf = doUnifyGenotyper( reference:reference dict:dict fai:fai inputbam:inputbam bami:bami dbsnp:dbsnp java:java gatk:gatk );
+}
 
 
-deftask variantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File) ] [reference( File ) dict( File ) fai( File )] dbsnp( File ) ) in bash *{
+deftask doVariantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File) ] [reference( File ) dict( File ) fai( File )] dbsnp( File ) java gatk) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -179,8 +220,7 @@ deftask variantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File
     ln -s $bam input.bam
     ln -s $bami input.bam.bai
     ####
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -Xmx2g -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -Xmx8g -jar $gatk/GenomeAnalysisTK.jar \
    -T VariantAnnotator \
    -R reference.fasta -o $vcf \
    -A QualByDepth\
@@ -188,8 +228,12 @@ deftask variantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File
    -L input.vcf \
    --dbsnp $dbsnp
 }*
+deftask variantAnnotator( vcf( File ) : inputVcf( File ) [bam( File ) bami( File) ] [reference( File ) dict( File ) fai( File )] dbsnp( File ) ) {
+    vcf = doVariantAnnotator( inputVcf:inputVcf reference:reference dict:dict fai:fai bam:bam bami:bami dbsnp:dbsnp java:java gatk:gatk );
+}
 
-deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf( File ) [reference( File ) dict( File ) fai( File )] hapmap( File ) omni( File ) dbsnp( File ) ) in bash *{
+
+deftask doVariantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf( File ) [reference( File ) dict( File ) fai( File )] hapmap( File ) omni( File ) dbsnp( File ) java gatk ) in bash *{
     #need to create symbolic links to achieve same filenames
     ln -s $reference reference.fasta
     ln -s $dict reference.dict
@@ -197,15 +241,17 @@ deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf(
     ln -s $inputVcf input.vcf
     ####
     #-an QD -an HaplotypeScore -an MQRankSum -an ReadPosRankSum -an FS -an MQ -an InbreedingCoeff \
-    /Library/Java/JavaVirtualMachines/jdk1.7.0_51.jdk/Contents/Home/bin/java \
-    -jar /Users/vadril/Documents/Uni/Work/GATK/GenomeAnalysisTK-3.1-1/GenomeAnalysisTK.jar \
+    $java -Xmx8g -jar $gatk/GenomeAnalysisTK.jar \
     -T VariantRecalibrator -R reference.fasta -input input.vcf  \
-    -resource:hapmap,known=false,training=true,truth=true,prior=15.0 $hapmap \
-    -resource:omni,known=false,training=true,truth=false,prior=12.0 $omni \
-    -resource:dbsnp,known=true,training=false,truth=false,prior=6.0 $dbsnp \
+    -resource:HapMap,known=false,training=true,truth=true,prior=15.0 $hapmap \
+    -resource:Omni,known=false,training=true,truth=truth,prior=12.0 $omni \
+    -resource:dbSNP,known=true,training=false,truth=false,prior=2.0 $dbsnp \
     -mode SNP -an QD -an MQ -an DP \
     -recalFile $recalFile -tranchesFile $tranchesFile
 }*
+deftask variantRecalibrator( recalFile( File ) tranchesFile ( File ) : inputVcf( File ) [reference( File ) dict( File ) fai( File )] hapmap( File ) omni( File ) dbsnp( File ) ) {
+    recalFile tranchesFile = doVariantRecalibrator( inputVcf:inputVcf reference:reference dict:dict fai:fai hapmap:hapmap omni:omni dbsnp:dbsnp java:java gatk:gatk );
+}
 
 /* Pseudo task, used to match the input files as planned when using lists of files
  * e.g. the reference chromosom must always be matched by its own known variants file
@@ -250,17 +296,12 @@ deftask startWorkflow( vcf( File ) : [ fastq1( File ) fastq2( File ) ] [ ref-gz(
     vcf = analysis( fastq1:fastq1 fastq2:fastq2 ref:ref refdict:refdict reffai:reffai knownVariants:knownVariants refindextar:indextar library:lib platform:platf platformunit:platfu samplename:samna hapmap:hapmap omni:omni dbsnp:dbsnp );
 }
 
-// WORKFLOW INPUT FILES
-//fastq1 = 'SRR062634_1.filt.fastq000000' 'SRR062634_1.filt.fastq000001';
-//fastq2 = 'SRR062634_2.filt.fastq000000' 'SRR062634_2.filt.fastq000001';
+// WORKFLOW INPUT FILES (have to be in the same folder)
 fastq1 = 'SRR062634_1.filt.fastq';
 fastq2 = 'SRR062634_2.filt.fastq';
 
 ref1-gz  = 'chr21.fa.gz' 'chr22.fa.gz';
-//get the known variants here:
-// ftp://ftp-trace.ncbi.nih.gov/1000genomes/ftp
-//     /release/20110521/ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf.gz
-known-variants = 'ALL.chr21.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf' 'ALL.chr22.phase1_release_v3.20101123.snps_indels_svs.genotypes.vcf';
+known-variants = 'known.variants.chr21.vcf' 'known.variants.chr22.vcf';
 hapmap = 'hapmap_3.3.hg19.vcf';
 omni= '1000G_omni2.5.hg19.vcf';
 dbsnp= 'dbsnp_138.hg19.vcf';
